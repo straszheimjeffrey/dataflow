@@ -1,4 +1,6 @@
+*~
 *.class
 *.jar
 ant.properties
+classes/
 

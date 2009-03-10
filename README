@@ -1,0 +1,12 @@
+
+                          A Dataflow Engine
+
+                                  by
+
+                          Jeffrey Straszheim
+
+                                   
+This package is a dataflow engine for Clojure modeled loosely on the
+"Cells" model, but using Clojure Ref's to manage state rather than
+Agents.
+

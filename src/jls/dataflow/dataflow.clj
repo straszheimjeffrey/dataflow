@@ -15,7 +15,7 @@
 
 
 (ns jls.dataflow.dataflow
-  (:use [clojure.set :only (union)])
+  (:use [clojure.set :only (union difference)])
   (:use [clojure.contrib.graph :only (directed-graph
                                       reverse-graph
                                       get-neighbors)])
@@ -108,11 +108,11 @@
                      dep-cell (cells dep-name)]
                  dep-cell))
         neighbors (zipmap nodes (map step nodes))]
-    (struct-map
+    (struct-map dataflow
         :nodes nodes
         :neighbors neighbors)))
 
-(defn- build-dataflow
+(defn build-dataflow
   "Given a collection of cells, build a dataflow object"
   [cs]
   (let [cells (build-cells-map cs)
@@ -122,6 +122,50 @@
       :cells cells
       :back-graph back-graph
       :fore-graph fore-graph)))
+
+
+    
+
+(comment
+  (build-fun '(apply + (apply - ?fred ?mary)))
+  (get-deps '(apply + (apply - ?fred ?mary)))
+
+  (cell fred (+ ?mary (apply + ?*sue)))
+  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
+
+  (cell :source fred)
+  (macroexpand '(cell :source fred))
+
+  (build-dataflow
+   [(cell :source fred)
+    (cell :source mary)
+    (cell joan (+ ?fred ?mary))])
+
+  (use :reload 'jls.dataflow.dataflow)
+  (use 'clojure.contrib.stacktrace) (e)
+  (use 'clojure.contrib.trace)
+)
+
+;;; Querying and Modifying a Dataflow
+
+(defn get-cells
+  "Get cells by name, returns a set"
+  [dataflow name]
+  (get (:cells dataflow) name))
+
+(defn add-cells
+  "Given a collection of cells, add them to the dataflow"
+  [df cells]
+  (let [old-cells (-> df :cells vals)
+        new-cells (union (set cells) old-cells)]
+    (build-dataflow new-cells)))
+
+(defn remove-cells
+  "Given a collection of cells, remove them from the dataflow"
+  [df cells]
+  (let [old-cells (-> df :cells vals)
+        new-cells (difference old-cells (set cells))]
+    (build-dataflow new-cells)))
 
 
 ;;; Cell building
@@ -207,22 +251,7 @@
    (= type :source) (let [[name] data]
                       `(build-source-cell '~name))))
 
-    
 
-(comment
-  (build-fun '(apply + (apply - ?fred ?mary)))
-  (get-deps '(apply + (apply - ?fred ?mary)))
-
-  (cell fred (+ ?mary (apply + ?*sue)))
-  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
-
-  (cell :source fred)
-  (macroexpand '(cell :source fred))
-
-  (use :reload 'jls.dataflow.dataflow)
-  (use 'clojure.contrib.stacktrace) (e)
-  (use 'clojure.contrib.trace)
-)
 
 ;;; Evaluation
 

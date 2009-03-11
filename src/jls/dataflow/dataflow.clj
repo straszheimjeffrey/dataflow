@@ -18,7 +18,8 @@
   (:use [clojure.set :only (union)])
   (:use [clojure.contrib.graph :only (directed-graph
                                       reverse-graph
-                                      get-neighbors)]))
+                                      get-neighbors)])
+  (:use [clojure.contrib.walk :only (prewalk postwalk)]))
 
 
 ;;; Chief Data Structures
@@ -65,18 +66,20 @@
 ;;; Environment Access
 
 (defn get-one-value
-  "Gets a value from the cells-map (env) matching the passed symbol.
+  "Gets a value from the cells-map matching the passed symbol.
    Signals an error if the name is not present, or if it not a single
    value."
-  [env name]
-  (let [[result] (env name)]
+  [cell-map name]
+  (let [[cell] (cell-map name)
+        result @(:val cell)]
     (do (assert (not= result *empty-value*))
         result)))
 
 (defn get-values
-  "Gets a collection of values from the cells-map (env) by name"
-  [env name]
-  (let [result (env name)]
+  "Gets a collection of values from the cells-map by name"
+  [cell-map name]
+  (let [cells (cell-map name)
+        results (map #(-> % :val deref) cells)]
     (do
       (assert (not-any? #(= % *empty-value*) result))
       result)))
@@ -109,7 +112,6 @@
         :nodes nodes
         :neighbors neighbors)))
 
-
 (defn- build-dataflow
   "Given a collection of cells, build a dataflow object"
   [cs]
@@ -121,6 +123,76 @@
       :back-graph back-graph
       :fore-graph fore-graph)))
 
+
+;;; Cell building
+
+(defn build-source-cell
+  "Builds a source cell"
+  [name]
+  (struct source-cell name (ref *empty-value*) ::source-cell))
+
+(defn- is-var?
+  [symb]
+  (let [name (name symb)]
+    (and (= \? (first name))
+         (not= \* (second name)))))
+
+(defn- is-col-var?
+  [symb]
+  (let [name (name symb)]
+    (and (= \? (first name))
+         (= \* (second name)))))
+
+(defn- cell-name
+  [symb]
+  (cond (is-var? symb) (-> symb name next symbol)
+        (is-col-var? symb) (-> symb name next next symbol)))
+
+(defn- replace-symbol
+  [env form]
+  (cond
+   (not (symbol? form)) form
+   (is-var? form) `(get-one-value ~env ~(cell-name form))
+   (is-col-var? form) `(get-values ~env ~(cell-name form))
+   :otherwise form))
+
+(defn- build-fun
+  [form]
+  (let [env (gensym)]
+    `(fn [~env] ~(postwalk (partial replace-symbol env) form))))
+
+(defn- get-deps
+  [form]
+  (let [step (fn [f]
+               (cond
+                (is-var? f) (cell-name f)
+                (is-col-var? f) (cell-name f)
+                :otherwise nil))]
+    (remove nil? (prewalk step form))))
+
+(defn build-cell
+  "Builds a standard cell"
+  [name deps fun]
+  (struct cell name (ref *empty-value*) deps fun ::cell))
+
+(defmacro cell
+  "Build a standard cell, like this:
+
+    (cell fred
+       (* ?mary ?joe))
+
+   Which creates a cell named fred that is the product of a cell mary and cell joe
+
+   Or:
+
+    (cell joe
+      (apply * ?*sally))
+
+   Which creates a cell that applies * to the collection of all cells named sally"
+  [name expr]
+  (let [deps (get-deps expr)
+        fun (build-fun expr)]
+    `(build-cell ~name ~deps ~fun)))
 
 ;;; Evaluation
 

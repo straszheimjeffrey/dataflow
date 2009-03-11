@@ -44,6 +44,7 @@
   :value           ; Its value, a Ref
   :dependents      ; The names of cells on which this depends, a collection
   :fun             ; A closure that computes the value, given an environment
+  :display         ; The original expression for display
   :cell-type)      ; Should be ::cell
 
 (derive ::cell ::dependent-cell) ; A cell that has a dependents field
@@ -65,7 +66,7 @@
 
 ;;; Environment Access
 
-(defn get-one-value
+(defn get-one-value*
   "Gets a value from the cells-map matching the passed symbol.
    Signals an error if the name is not present, or if it not a single
    value."
@@ -75,7 +76,7 @@
     (do (assert (not= result *empty-value*))
         result)))
 
-(defn get-values
+(defn get-values*
   "Gets a collection of values from the cells-map by name"
   [cell-map name]
   (let [cells (cell-map name)
@@ -124,27 +125,14 @@
       :fore-graph fore-graph)))
 
 
-    
+;;; Displaying a dataflow
 
-(comment
-  (build-fun '(apply + (apply - ?fred ?mary)))
-  (get-deps '(apply + (apply - ?fred ?mary)))
+(defn print-dataflow
+  [df]
+  (doseq [cells (-> df :cells vals)
+          cell cells]
+    (println cell)))
 
-  (cell fred (+ ?mary (apply + ?*sue)))
-  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
-
-  (cell :source fred)
-  (macroexpand '(cell :source fred))
-
-  (build-dataflow
-   [(cell :source fred)
-    (cell :source mary)
-    (cell joan (+ ?fred ?mary))])
-
-  (use :reload 'jls.dataflow.dataflow)
-  (use 'clojure.contrib.stacktrace) (e)
-  (use 'clojure.contrib.trace)
-)
 
 ;;; Querying and Modifying a Dataflow
 
@@ -167,13 +155,19 @@
         new-cells (difference old-cells (set cells))]
     (build-dataflow new-cells)))
 
+(defn get-values
+  "Get the vaules (a collection) of the named cells"
+  [df name]
+  (get-values* (:cells df) name))
+
 
 ;;; Cell building
 
 (defn build-source-cell
   "Builds a source cell"
   [name]
-  (struct source-cell name (ref *empty-value*) ::source-cell))
+  (with-meta (struct source-cell name (ref *empty-value*) ::source-cell)
+             {:type ::dataflow-cell}))
 
 (defn- is-var?
   [symb]
@@ -196,8 +190,8 @@
   [env form]
   (cond
    (-> form symbol? not) form
-   (is-var? form) `(get-one-value ~env ~(cell-name form))
-   (is-col-var? form) `(get-values ~env ~(cell-name form))
+   (is-var? form) `(get-one-value* ~env ~(cell-name form))
+   (is-col-var? form) `(get-values* ~env ~(cell-name form))
    :otherwise form))
 
 (defn- build-fun
@@ -218,8 +212,9 @@
 
 (defn build-standard-cell
   "Builds a standard cell"
-  [name deps fun]
-  (struct standard-cell name (ref *empty-value*) deps fun ::cell))
+  [name deps fun expr]
+  (with-meta (struct standard-cell name (ref *empty-value*) deps fun expr ::cell)
+             {:type ::dataflow-cell}))
 
 (defmacro cell
   "Build a standard cell, like this:
@@ -247,10 +242,27 @@
                         [expr] data
                         deps (get-deps expr)
                         fun (build-fun expr)]
-                    `(build-standard-cell '~name ~deps ~fun))
+                    `(build-standard-cell '~name ~deps ~fun '~expr))
    (= type :source) (let [[name] data]
                       `(build-source-cell '~name))))
 
+
+;;; Cell Display
+
+(defmulti display-cell :cell-type)
+
+(defmethod display-cell ::source-cell
+  [cell]
+  (list 'cell :source (:name cell)))
+
+(defmethod display-cell ::cell
+  [cell]
+  (list 'cell (:name cell) (:display cell)))
+
+(defmethod print-method ::dataflow-cell
+  [f #^Writer w]
+  (binding [*out* w]
+    (pr (display-cell f))))
 
 
 ;;; Evaluation
@@ -300,5 +312,27 @@
     (dosync (perform-flow df data needed))))
   
 
+    
+
+(comment
+  (build-fun '(apply + (apply - ?fred ?mary)))
+  (get-deps '(apply + (apply - ?fred ?mary)))
+
+  (display-cell (cell fred (+ ?mary (apply + ?*sue))))
+  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
+
+  (display-cell (cell :source fred))
+  (macroexpand '(cell :source fred))
+
+  (print-dataflow
+   (build-dataflow
+    [(cell :source fred)
+     (cell :source mary)
+     (cell joan (+ ?fred ?mary))]))
+
+  (use :reload 'jls.dataflow.dataflow)
+  (use 'clojure.contrib.stacktrace) (e)
+  (use 'clojure.contrib.trace)
+)
 
 ;; End of file

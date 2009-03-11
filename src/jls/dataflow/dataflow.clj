@@ -19,7 +19,8 @@
   (:use [clojure.contrib.graph :only (directed-graph
                                       reverse-graph
                                       get-neighbors)])
-  (:use [clojure.contrib.walk :only (postwalk)]))
+  (:use [clojure.contrib.walk :only (postwalk)])
+  (:use [clojure.contrib.except :only (throwf)]))
 
 
 ;;; Chief Data Structures
@@ -66,20 +67,34 @@
 
 ;;; Environment Access
 
-(defn get-one-value*
-  "Gets a value from the cells-map matching the passed symbol.
+(defn get-cells
+  "Get all the cells named by name"
+  [df name]
+  ((:cells df) name))
+
+(defn get-cell
+  "Get the single cell named by name"
+  [df name]
+  (let [cells (get-cells name)]
+    (if (= (count cells) 1)
+      (first cells)
+      (throwf Exception "Cell %s has multiple instances" name))))
+    
+
+(defn get-value
+  "Gets a value from the df matching the passed symbol.
    Signals an error if the name is not present, or if it not a single
-   value."
-  [cell-map name]
-  (let [[cell] (cell-map name)
+   value."  
+  [df name]
+  (let [cell (get-cell df name)
         result @(:val cell)]
     (do (assert (not= result *empty-value*))
         result)))
 
-(defn get-values*
-  "Gets a collection of values from the cells-map by name"
-  [cell-map name]
-  (let [cells (cell-map name)
+(defn get-values
+  "Gets a collection of values from the df by name"
+  [df name]
+  (let [cells (get-cells df name)
         results (map #(-> % :val deref) cells)]
     (do
       (assert (not-any? #(= % *empty-value*) results))
@@ -134,12 +149,7 @@
     (println cell)))
 
 
-;;; Querying and Modifying a Dataflow
-
-(defn get-cells
-  "Get cells by name, returns a set"
-  [dataflow name]
-  (get (:cells dataflow) name))
+;;; Modifying a Dataflow
 
 (defn add-cells
   "Given a collection of cells, add them to the dataflow"
@@ -154,11 +164,6 @@
   (let [old-cells (-> df :cells vals)
         new-cells (difference old-cells (set cells))]
     (build-dataflow new-cells)))
-
-(defn get-values
-  "Get the vaules (a collection) of the named cells"
-  [df name]
-  (get-values* (:cells df) name))
 
 
 ;;; Cell building
@@ -187,17 +192,17 @@
                  (is-col-var? symb) (-> symb name (.substring 2) symbol))))
 
 (defn- replace-symbol
-  [env form]
+  [df form]
   (cond
    (-> form symbol? not) form
-   (is-var? form) `(get-one-value* ~env ~(cell-name form))
-   (is-col-var? form) `(get-values* ~env ~(cell-name form))
+   (is-var? form) `(get-value ~df ~(cell-name form))
+   (is-col-var? form) `(get-values ~df ~(cell-name form))
    :otherwise form))
 
 (defn- build-fun
   [form]
-  (let [env (gensym)]
-    `(fn [~env] ~(postwalk (partial replace-symbol env) form))))
+  (let [df (gensym)]
+    `(fn [~df] ~(postwalk (partial replace-symbol df) form))))
 
 (defn- get-deps
   [form]
@@ -272,7 +277,7 @@
   :cell-type)
 
 (defmethod eval-cell ::source-cell
-  [cell-map data cell]
+  [df data cell]
   (let [name (:name cell)]
     (if (contains? data name)
       (let [new-val (data name)]
@@ -283,8 +288,8 @@
       false)))
 
 (defmethod eval-cell ::cell
-  [cell-map data cell]
-  (let [new-val ((:fun cell) cell-map)]
+  [df data cell]
+  (let [new-val ((:fun cell) df)]
     (if (not= @(:val cell) new-val)
       (do (ref-set (:val cell) new-val)
           true)
@@ -297,16 +302,26 @@
   (let [this (first needed)
         fore (:fore-graph df)
         remaining (disj needed this)]
-    (do (if (eval-cell (:cells df) data this)
+    (do (if (eval-cell df data this)
           (recur df data (union remaining
                                 (set (get-neighbors fore this))))
           (recur df data remaining)))))
+
+(defn- validate-update
+  "Ensure that all the updated cells are source cells"
+  [df names]
+  (doseq [name names]
+    (let [cell (get-cell df name)]
+      (when (not (isa? (:cell-type cell) ::source-cell))
+        (throwf Exception "Cell %n is not a source cell" name)))))
+        
 
 (defn update-values
   "Given a dataflow, and a map of name-value pairs, update the
    dataflow by binding the new values.  Each name must be of a source
    cell"
   [df data]
+  (validate-update df (keys data))
   (let [needed (apply union (for [name (keys data)]
                               (set ((:cells df) name))))]
     (dosync (perform-flow df data needed))))

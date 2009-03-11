@@ -14,12 +14,12 @@
 ;;  Created 10 March 2009
 
 
-(ns clojure.contrib.dataflow
+(ns jls.dataflow.dataflow
   (:use [clojure.set :only (union)])
   (:use [clojure.contrib.graph :only (directed-graph
                                       reverse-graph
                                       get-neighbors)])
-  (:use [clojure.contrib.walk :only (prewalk postwalk)]))
+  (:use [clojure.contrib.walk :only (postwalk)]))
 
 
 ;;; Chief Data Structures
@@ -39,7 +39,7 @@
 
 ; A standard cell that computes its value from other cells.
 
-(defstruct cell
+(defstruct standard-cell
   :name            ; The name, a symbol
   :value           ; Its value, a Ref
   :dependents      ; The names of cells on which this depends, a collection
@@ -81,8 +81,8 @@
   (let [cells (cell-map name)
         results (map #(-> % :val deref) cells)]
     (do
-      (assert (not-any? #(= % *empty-value*) result))
-      result)))
+      (assert (not-any? #(= % *empty-value*) results))
+      results)))
 
 
 ;;; Build Dataflow Structure
@@ -145,13 +145,13 @@
 
 (defn- cell-name
   [symb]
-  (cond (is-var? symb) (-> symb name next symbol)
-        (is-col-var? symb) (-> symb name next next symbol)))
+  `(quote ~(cond (is-var? symb) (-> symb name (.substring 1) symbol)
+                 (is-col-var? symb) (-> symb name (.substring 2) symbol))))
 
 (defn- replace-symbol
   [env form]
   (cond
-   (not (symbol? form)) form
+   (-> form symbol? not) form
    (is-var? form) `(get-one-value ~env ~(cell-name form))
    (is-col-var? form) `(get-values ~env ~(cell-name form))
    :otherwise form))
@@ -165,15 +165,17 @@
   [form]
   (let [step (fn [f]
                (cond
-                (is-var? f) (cell-name f)
-                (is-col-var? f) (cell-name f)
+                (coll? f) (apply union f)
+                (-> f symbol? not) nil
+                (is-var? f) #{(cell-name f)}
+                (is-col-var? f) #{(cell-name f)}
                 :otherwise nil))]
-    (remove nil? (prewalk step form))))
+    (postwalk step form)))
 
-(defn build-cell
+(defn build-standard-cell
   "Builds a standard cell"
   [name deps fun]
-  (struct cell name (ref *empty-value*) deps fun ::cell))
+  (struct standard-cell name (ref *empty-value*) deps fun ::cell))
 
 (defmacro cell
   "Build a standard cell, like this:
@@ -188,11 +190,39 @@
     (cell joe
       (apply * ?*sally))
 
-   Which creates a cell that applies * to the collection of all cells named sally"
-  [name expr]
-  (let [deps (get-deps expr)
-        fun (build-fun expr)]
-    `(build-cell ~name ~deps ~fun)))
+   Which creates a cell that applies * to the collection of all cells named sally
+
+   Of:
+
+    (cell :source fred)
+
+   Which builds a source cell fred"
+  [type & data]
+  (cond
+   (symbol? type) (let [name type ; No type for standard cell
+                        [expr] data
+                        deps (get-deps expr)
+                        fun (build-fun expr)]
+                    `(build-standard-cell '~name ~deps ~fun))
+   (= type :source) (let [[name] data]
+                      `(build-source-cell '~name))))
+
+    
+
+(comment
+  (build-fun '(apply + (apply - ?fred ?mary)))
+  (get-deps '(apply + (apply - ?fred ?mary)))
+
+  (cell fred (+ ?mary (apply + ?*sue)))
+  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
+
+  (cell :source fred)
+  (macroexpand '(cell :source fred))
+
+  (use :reload 'jls.dataflow.dataflow)
+  (use 'clojure.contrib.stacktrace) (e)
+  (use 'clojure.contrib.trace)
+)
 
 ;;; Evaluation
 

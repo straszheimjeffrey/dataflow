@@ -343,12 +343,13 @@
   (let [name (:name cell)
         val (:value cell)
         ov @val]
-    (when (contains? data name)
+    (if (contains? data name)
       (let [new-val (data name)]
         (if (not= ov new-val)
           (do (ref-set val new-val)
               [true ov])
-          [false ov])))))
+          [false ov]))
+      [false ov])))
 
 (defmethod eval-cell ::cell
   [df data old cell]

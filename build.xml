@@ -19,7 +19,7 @@
   </target>
 
   <!-- The JAR file to create. -->
-  <property name="jarfile" location="clojure-datalog.jar"/>
+  <property name="jarfile" location="jls-dataflow.jar"/>
 
   <target name="init">
     <tstamp/>
@@ -42,7 +42,7 @@
         <path location="${clojure.jar}"/>
         <path location="${clojure-contrib.jar}"/>
       </classpath>
-      <arg value="src/...."/>
+      <arg value="src/jls/dataflow/test/test.clj"/>
     </java>
   </target>
 
@@ -57,7 +57,7 @@
         <path location="${clojure-contrib.jar}"/>
       </classpath>
       <sysproperty key="clojure.compile.path" value="${build}"/>
-      <arg value="....."/>
+      <arg value="jls.dataflow.dataflow"/>
     </java>
   </target>
 

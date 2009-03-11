@@ -64,6 +64,7 @@
 
 (derive ::validator-cell ::dependent-cell)
 
+
 ;; A sentinal value
 
 (def *empty-value* (java.lang.Object.))
@@ -385,6 +386,19 @@
     (dosync (perform-flow df {} needed))))
 
 
+;;; Watchers
+
+(defn add-cell-watcher
+  "Adds a watcher to a cell to respond to changes of value.  The is a
+   function of 4 values: a key, the cell, its old value, its new
+   value.  This is implemented using Clojure's add-watch to the
+   underlying ref, and shared its sematics"
+  [cell key fun]
+  (let [val (:value cell)]
+    (add-watch val key (fn [key _ old-v new-v]
+                         (fun key cell old-v new-v)))))
+
+
 (comment
 
   (macroexpand '(cell :validator (when ?fred (throwf "fred!"))))
@@ -398,6 +412,11 @@
      (cell joan (* ?fred ?mary))
      (cell sally (apply + ?*joan))
      (cell :validator (when (= ?sally 0) (throwf Exception "Sally is 0")))]))
+
+  (add-cell-watcher (get-cell df 'sally)
+                    nil
+                    (fn [key cell o n]
+                      (printf "sally changed from %s to %s\n" o n)))
 
   (get-source-cells df)
 

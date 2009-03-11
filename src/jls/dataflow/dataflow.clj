@@ -81,7 +81,14 @@
     (if (= (count cells) 1)
       (first cells)
       (throwf Exception "Cell %s has multiple instances" name))))
-    
+
+(defn get-source-cells
+  "Returns a collection of source cells from the dataflow"
+  [df]
+  (for [cells (-> df :cells vals)
+        cell cells
+        :when (isa? (:cell-type cell) ::source-cell)]
+    cell))
 
 (defn get-value
   "Gets a value from the df matching the passed symbol.
@@ -316,9 +323,9 @@
 (defn- validate-update
   "Ensure that all the updated cells are source cells"
   [df names]
-  (doseq [name names]
-    (let [cell (get-cell df name)]
-      (when (not (isa? (:cell-type cell) ::source-cell))
+  (let [scns (set (map :name (get-source-cells df)))]
+    (doseq [name names]
+      (when (-> name scns not)
         (throwf Exception "Cell %n is not a source cell" name)))))
         
 (defn update-values
@@ -330,6 +337,15 @@
   (let [needed (apply union (for [name (keys data)]
                               (set ((:cells df) name))))]
     (dosync (perform-flow df data needed))))
+
+(defn full-update
+  "Apply all the current source cell values.  Useful for a new
+   dataflow, or one that has been updated with new cells"
+  [df]
+  (let [scs (get-source-cells df)
+        fg (:fore-graph df)
+        needed (apply union (map #(get-neighbors fg %) scs))]
+    (dosync (perform-flow df {} needed))))
 
 
 (comment
@@ -345,9 +361,12 @@
   (def df
    (build-dataflow
     [(cell :source fred 0)
-     (cell :source mary 0)
+     (cell :source mary 1)
      (cell joan (+ ?fred ?mary))]))
 
+  (get-source-cells df)
+
+  (full-update df)
   (update-values df {'fred 5 'mary 1})
 
   (get-value df 'fred)

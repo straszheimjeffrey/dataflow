@@ -15,8 +15,10 @@
 
 
 (ns clojure.contrib.dataflow
+  (:use [clojure.set :only (union)])
   (:use [clojure.contrib.graph :only (directed-graph
-                                      reverse-graph)]))
+                                      reverse-graph
+                                      get-neighbors)]))
 
 
 ;;; Chief Data Structures
@@ -56,7 +58,7 @@
 
 (defstruct dataflow
   :cells          ; A map of cell names (symbols) to collection of cells
-  :back-graph     ; A graph of dependencies, the nodes are cell names
+  :back-graph     ; A graph of dependencies, the nodes are cells
   :fore-graph)    ; The inverse of back-graph, shows dataflow
 
 
@@ -82,7 +84,7 @@
 
 ;;; Build Dataflow Structure
 
-(defn build-cells-map
+(defn- build-cells-map
   "Given a collection of cells, build a name->cells-collection map
    from it."
   [cs]
@@ -93,20 +95,22 @@
                  (assoc m n s)))]
     (reduce step {} cs)))
 
-(defn build-back-graph
-  "Builds the backward dependency graph from the cells map.  Each node
-   of the graph is a collection of cells that share the same name."
+(defn- build-back-graph
+  "Builds the backward dependency graph from the cells map.  Each
+   node of the graph is a cell."
   [cells]
-  (let [nodes (keys cells)
-        c-ns (fn [k]
-               (let [cs (filter #(isa? % ::dependent-cell) (cells k))]
-                 (mapcat :dependents cs)))
-        neighbors (into {} (map #([% (c-ns %)]) nodes))]
+  (let [nodes (vals cells)
+        step (fn [n]
+               (for [dep-name (:dependents n)
+                     dep-cell (cells dep-name)]
+                 dep-cell))
+        neighbors (zipmap nodes (map step nodes))]
     (struct-map
         :nodes nodes
         :neighbors neighbors)))
 
-(defn build-dataflow
+
+(defn- build-dataflow
   "Given a collection of cells, build a dataflow object"
   [cs]
   (let [cells (build-cells-map cs)
@@ -116,6 +120,54 @@
       :cells cells
       :back-graph back-graph
       :fore-graph fore-graph)))
+
+
+;;; Evaluation
+
+(defmulti eval-cell
+  "Evaluate a dataflow cell.  Return true if the value changed."
+  :cell-type)
+
+(defmethod eval-cell ::source-cell
+  [cell-map data cell]
+  (let [name (:name cell)]
+    (if (contains? data name)
+      (let [new-val (data name)]
+        (if (not= @(:val cell))
+          (do (ref-set (:val cell) new-val)
+              true)
+          false))
+      false)))
+
+(defmethod eval-cell ::cell
+  [cell-map data cell]
+  (let [new-val ((:fun cell) cell-map)]
+    (if (not= @(:val cell) new-val)
+      (do (ref-set (:val cell) new-val)
+          true)
+      false)))
+
+(defn- perform-flow
+  "Evaluate the needed cells (a set) from the given dataflow.  Data is
+   a name-value mapping of new values for the source cells"
+ [df data needed]
+  (let [this (first needed)
+        fore (:fore-graph df)
+        remaining (disj needed this)]
+    (do (if (eval-cell (:cells df) data this)
+          (recur df (union remaining
+                           (set (get-neighbors fore this))))
+          (recur df remaining)))))
+
+(defn update-values
+  "Given a dataflow, and a map of name-value pairs, update the
+   dataflow by binding the new values.  Each name must be of a source
+   cell"
+  [df data]
+  (let [needed (apply union (for [name (keys data)]
+                              (set ((:cells df) name))))]
+    (dosync (perform-flow df data needed))))
+  
 
 
 ;; End of file

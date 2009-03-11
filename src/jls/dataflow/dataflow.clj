@@ -91,9 +91,10 @@
   "Get the single cell named by name"
   [df name]
   (let [cells (get-cells df name)]
-    (if (= (count cells) 1)
-      (first cells)
-      (throwf Exception "Cell %s has multiple instances" name))))
+    (cond
+     (= (count cells) 1) (first cells)
+     (> (count cells) 1) (throwf Exception "Cell %s has multiple instances" name)
+     :otherwise (throwf Exception "Cell %s is undefined" name))))
 
 (defn get-source-cells
   "Returns a collection of source cells from the dataflow"
@@ -121,6 +122,13 @@
     (do
       (assert (not-any? #(= % *empty-value*) results))
       results)))
+
+(defn get-old-value
+  "Looks up an old value"
+  [df env name]
+  (if (contains? env name)
+    (env name)
+    (get-value df name)))
 
 
 ;;; Build Dataflow Structure
@@ -197,35 +205,45 @@
   (with-meta (struct source-cell name (ref init) ::source-cell)
              *meta*))
 
-(defn- is-var?
-  [symb]
-  (let [name (name symb)]
-    (and (= \? (first name))
-         (not= \* (second name)))))
-
 (defn- is-col-var?
   [symb]
   (let [name (name symb)]
     (and (= \? (first name))
          (= \* (second name)))))
 
+(defn- is-old-var?
+  [symb]
+  (let [name (name symb)]
+    (and (= \? (first name))
+         (= \- (second name)))))
+
+(defn- is-var?
+  [symb]
+  (let [name (name symb)]
+    (and (= \? (first name))
+         (-> symb is-col-var? not)
+         (-> symb is-old-var? not))))
+
 (defn- cell-name
   [symb]
   `(quote ~(cond (is-var? symb) (-> symb name (.substring 1) symbol)
-                 (is-col-var? symb) (-> symb name (.substring 2) symbol))))
+                 (or (is-col-var? symb)
+                     (is-old-var? symb)) (-> symb name (.substring 2) symbol))))
 
 (defn- replace-symbol
-  [df form]
+  [df ov form]
   (cond
    (-> form symbol? not) form
    (is-var? form) `(get-value ~df ~(cell-name form))
    (is-col-var? form) `(get-values ~df ~(cell-name form))
+   (is-old-var? form) `(get-old-value ~df ~ov ~(cell-name form))
    :otherwise form))
 
 (defn- build-fun
   [form]
-  (let [df (gensym)]
-    `(fn [~df] ~(postwalk (partial replace-symbol df) form))))
+  (let [df (gensym)
+        ov (gensym)]
+    `(fn [~df ~ov] ~(postwalk (partial replace-symbol df ov) form))))
 
 (defn- get-deps
   [form]
@@ -235,6 +253,7 @@
                 (-> f symbol? not) nil
                 (is-var? f) #{(cell-name f)}
                 (is-col-var? f) #{(cell-name f)}
+                (is-old-var? f) #{(cell-name f)}
                 :otherwise nil))]
     (postwalk step form)))
 
@@ -316,47 +335,55 @@
 ;;; Evaluation
 
 (defmulti eval-cell
-  "Evaluate a dataflow cell.  Return true if the value changed."
-  (fn [df data cell] (:cell-type cell)))
+  "Evaluate a dataflow cell.  Return [changed, old val]"
+  (fn [df data old cell] (:cell-type cell)))
 
 (defmethod eval-cell ::source-cell
-  [df data cell]
+  [df data old cell]
   (let [name (:name cell)
-        val (:value cell)]
+        val (:value cell)
+        ov @val]
     (when (contains? data name)
       (let [new-val (data name)]
-        (when (not= @val new-val)
-          (ref-set val new-val)
-          true)))))
+        (if (not= ov new-val)
+          (do (ref-set val new-val)
+              [true ov])
+          [false ov])))))
 
 (defmethod eval-cell ::cell
-  [df data cell]
+  [df data old cell]
   (let [val (:value cell)
-        new-val ((:fun cell) df)]
-    (when (not= @val new-val)
-      (ref-set val new-val)
-      true)))
+        old-val @val
+        new-val ((:fun cell) df old)]
+    (if (not= old-val new-val)
+      (do (ref-set val new-val)
+          [true old-val])
+      [false old-val])))
 
 (defmethod eval-cell ::validator-cell
-  [df data cell]
-  ((:fun cell) df))
+  [df data old cell]
+  (do ((:fun cell) df old)
+      [false nil]))
 
 (defn- perform-flow
   "Evaluate the needed cells (a sequence) from the given dataflow.  Data is
    a name-value mapping of new values for the source cells"
  [df data needed]
  (loop [needed needed
-        tops (:topological df)]
+        tops (:topological df)
+        old {}]
    (let [now (first tops) ; Now is a set of nodes
          new-tops (next tops)]
      (when (and (-> needed empty? not)
                 (-> now empty? not))
-       (let [step (fn [needed cell]
-                    (if (eval-cell df data cell)
-                      (union needed (get-neighbors (:fore-graph df) cell))
-                      needed))
-             new-needed (reduce step needed (intersection now needed))]
-         (recur new-needed new-tops))))))
+       (let [step (fn [[needed old] cell]
+                    (let [[changed ov] (eval-cell df data old cell)
+                          new-old (assoc old (:name cell) ov)]
+                      (if changed
+                        [(union needed (get-neighbors (:fore-graph df) cell)) new-old]
+                        [needed new-old])))
+             [new-needed new-old] (reduce step [needed old] (intersection now needed))]
+         (recur new-needed new-tops new-old))))))
          
 (defn- validate-update
   "Ensure that all the updated cells are source cells"
@@ -401,32 +428,32 @@
 
 (comment
 
-  (macroexpand '(cell :validator (when ?fred (throwf "fred!"))))
-  (cell :validator (when ?fred (throwf "fred!")))
-
   (def df
    (build-dataflow
     [(cell :source fred 1)
      (cell :source mary 0)
+     (cell greg (+ ?fred ?mary))
      (cell joan (+ ?fred ?mary))
      (cell joan (* ?fred ?mary))
      (cell sally (apply + ?*joan))
-     (cell :validator (when (= ?sally ?mary) (throwf Exception "Sally equals mary")))]))
+     (cell :validator (when (number? ?-greg)
+                        (when (<= ?greg ?-greg)
+                          (throwf Exception "Non monotonic"))))]))
 
   (add-cell-watcher (get-cell df 'sally)
                     nil
                     (fn [key cell o n]
                       (printf "sally changed from %s to %s\n" o n)))
 
-  (get-source-cells df)
-
   (full-update df)
+  (update-values df {'fred 1 'mary 1})
   (update-values df {'fred 5 'mary 1})
   (update-values df {'fred 0 'mary 0})
 
   (get-value df 'fred)
   (get-values df 'joan)
   (get-value df 'sally)
+  (get-value df 'greg)
 
   (use :reload 'jls.dataflow.dataflow)
   (use 'clojure.contrib.stacktrace) (e)

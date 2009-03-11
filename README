@@ -14,19 +14,28 @@ Usage:
 
   (def df
    (build-dataflow
-    [(cell :source fred 1)
+    [
 
+     ; Source cells are set by the user
+     (cell :source fred 1)
+
+     ; Reference other cells by ?name
+     (cell greg (+ ?fred ?mary))
+
+     (cell joan (+ ?fred ?mary))
+
+     ; Order does not matter
      (cell :source mary 0)
-
-     (cell joan (+ ?fred ?mary))  ; other cells are reference as ?name
 
      (cell joan (* ?fred ?mary))
 
-     (cell sally (apply + ?*joan)) ; cells can have the same name, get a collection
-                                   ; of values as ?*name
+     ; Multiple joans exist, ?*name returns a collection
+     (cell sally (apply + ?*joan))
 
-     (cell :validator (when (= ?sally ?mary)
-                         (throwf Exception "Sally equals mary")))])) ; global validation
+     ; validators can return exceptions.  ?-name gets the old value
+     (cell :validator (when (number? ?-greg)
+                        (when (<= ?greg ?-greg)
+                          (throwf Exception "Non monotonic"))))]))
 
   (add-cell-watcher (get-cell df 'sally)
                     nil
@@ -34,10 +43,12 @@ Usage:
                       (printf "sally changed from %s to %s\n" o n)))
 
   (full-update df)
+  (update-values df {'fred 1 'mary 1})
   (update-values df {'fred 5 'mary 1})
-  (update-values df {'fred 0 'mary 0}) ; Will fail validation and rollback - no values change
+  (update-values df {'fred 0 'mary 0}) ; Will throw Non monotonic exception
 
   (get-value df 'fred)
   (get-values df 'joan)
   (get-value df 'sally)
+  (get-value df 'greg)
 

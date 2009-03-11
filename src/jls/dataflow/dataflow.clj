@@ -14,7 +14,9 @@
 ;;  Created 10 March 2009
 
 
-(ns clojure.contrib.dataflow)
+(ns clojure.contrib.dataflow
+  (:use [clojure.contrib.graph :only (directed-graph
+                                      reverse-graph)]))
 
 
 ;;; Chief Data Structures
@@ -37,7 +39,7 @@
 (defstruct cell
   :name            ; The name, a symbol
   :value           ; Its value, a Ref
-  :dependents      ; The names of cells on which this depends
+  :dependents      ; The names of cells on which this depends, a collection
   :fun             ; A closure that computes the value, given an environment
   :cell-type)      ; Should be ::cell
 
@@ -54,7 +56,7 @@
 
 (defstruct dataflow
   :cells          ; A map of cell names (symbols) to collection of cells
-  :back-graph     ; A graph of dependencies
+  :back-graph     ; A graph of dependencies, the nodes are cell names
   :fore-graph)    ; The inverse of back-graph, shows dataflow
 
 
@@ -78,10 +80,42 @@
       result)))
 
 
-;;; Dependency Graph
+;;; Build Dataflow Structure
 
+(defn build-cells-map
+  "Given a collection of cells, build a name->cells-collection map
+   from it."
+  [cs]
+  (let [step (fn [m c]
+               (let [n (:name c)
+                     o (get m n #{})
+                     s (conj o c)]
+                 (assoc m n s)))]
+    (reduce step {} cs)))
 
+(defn build-back-graph
+  "Builds the backward dependency graph from the cells map.  Each node
+   of the graph is a collection of cells that share the same name."
+  [cells]
+  (let [nodes (keys cells)
+        c-ns (fn [k]
+               (let [cs (filter #(isa? % ::dependent-cell) (cells k))]
+                 (mapcat :dependents cs)))
+        neighbors (into {} (map #([% (c-ns %)]) nodes))]
+    (struct-map
+        :nodes nodes
+        :neighbors neighbors)))
 
+(defn build-dataflow
+  "Given a collection of cells, build a dataflow object"
+  [cs]
+  (let [cells (build-cells-map cs)
+        back-graph (build-back-graph cells)
+        fore-graph (reverse-graph back-graph)]
+    (struct-map dataflow
+      :cells cells
+      :back-graph back-graph
+      :fore-graph fore-graph)))
 
 
 ;; End of file

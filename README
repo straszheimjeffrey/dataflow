@@ -35,7 +35,7 @@ Usage:
 
   (full-update df)
   (update-values df {'fred 5 'mary 1})
-  (update-values df {'fred 0 'mary 0}) ; Will fail validation
+  (update-values df {'fred 0 'mary 0}) ; Will fail validation and rollback - no values change
 
   (get-value df 'fred)
   (get-values df 'joan)

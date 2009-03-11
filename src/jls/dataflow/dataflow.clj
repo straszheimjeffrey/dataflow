@@ -111,7 +111,8 @@
   [df name]
   (let [cell (get-cell df name)
         result @(:value cell)]
-    (do (assert (not= result *empty-value*))
+    (do (when (= *empty-value* result)
+          (throwf Exception "Cell named %s empty" name))
         result)))
 
 (defn get-values
@@ -120,7 +121,8 @@
   (let [cells (get-cells df name)
         results (map #(-> % :value deref) cells)]
     (do
-      (assert (not-any? #(= % *empty-value*) results))
+      (when (some #(= % *empty-value*) results)
+        (throwf Exception "At least one empty cell named %s found" name))
       results)))
 
 (defn get-old-value
@@ -407,9 +409,8 @@
   "Apply all the current source cell values.  Useful for a new
    dataflow, or one that has been updated with new cells"
   [df]
-  (let [scs (get-source-cells df)
-        fg (:fore-graph df)
-        needed (apply union (map #(get-neighbors fg %) scs))]
+  (let [needed (apply union (set (-> df :cells vals)))
+        fg (:fore-graph df)]
     (dosync (perform-flow df {} needed))))
 
 

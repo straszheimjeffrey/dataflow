@@ -227,9 +227,9 @@
         fore (:fore-graph df)
         remaining (disj needed this)]
     (do (if (eval-cell (:cells df) data this)
-          (recur df (union remaining
-                           (set (get-neighbors fore this))))
-          (recur df remaining)))))
+          (recur df data (union remaining
+                                (set (get-neighbors fore this))))
+          (recur df data remaining)))))
 
 (defn update-values
   "Given a dataflow, and a map of name-value pairs, update the

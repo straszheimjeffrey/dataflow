@@ -10,3 +10,34 @@ This package is a dataflow engine for Clojure modeled loosely on the
 "Cells" model, but using Clojure Ref's to manage state rather than
 Agents.
 
+Usage:
+
+  (def df
+   (build-dataflow
+    [(cell :source fred 1)
+
+     (cell :source mary 0)
+
+     (cell joan (+ ?fred ?mary))  ; other cells are reference as ?name
+
+     (cell joan (* ?fred ?mary))
+
+     (cell sally (apply + ?*joan)) ; cells can have the same name, get a collection
+                                   ; of values as ?*name
+
+     (cell :validator (when (= ?sally ?mary)
+                         (throwf Exception "Sally equals mary")))])) ; global validation
+
+  (add-cell-watcher (get-cell df 'sally)
+                    nil
+                    (fn [key cell o n]
+                      (printf "sally changed from %s to %s\n" o n)))
+
+  (full-update df)
+  (update-values df {'fred 5 'mary 1})
+  (update-values df {'fred 0 'mary 0}) ; Will fail validation
+
+  (get-value df 'fred)
+  (get-values df 'joan)
+  (get-value df 'sally)
+

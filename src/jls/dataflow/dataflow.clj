@@ -406,12 +406,12 @@
 
   (def df
    (build-dataflow
-    [(cell :source fred 0)
-     (cell :source mary 1)
+    [(cell :source fred 1)
+     (cell :source mary 0)
      (cell joan (+ ?fred ?mary))
      (cell joan (* ?fred ?mary))
      (cell sally (apply + ?*joan))
-     (cell :validator (when (= ?sally 0) (throwf Exception "Sally is 0")))]))
+     (cell :validator (when (= ?sally ?mary) (throwf Exception "Sally equals mary")))]))
 
   (add-cell-watcher (get-cell df 'sally)
                     nil

@@ -75,7 +75,7 @@
 (defn get-cell
   "Get the single cell named by name"
   [df name]
-  (let [cells (get-cells name)]
+  (let [cells (get-cells df name)]
     (if (= (count cells) 1)
       (first cells)
       (throwf Exception "Cell %s has multiple instances" name))))
@@ -87,7 +87,7 @@
    value."  
   [df name]
   (let [cell (get-cell df name)
-        result @(:val cell)]
+        result @(:value cell)]
     (do (assert (not= result *empty-value*))
         result)))
 
@@ -95,7 +95,7 @@
   "Gets a collection of values from the df by name"
   [df name]
   (let [cells (get-cells df name)
-        results (map #(-> % :val deref) cells)]
+        results (map #(-> % :value deref) cells)]
     (do
       (assert (not-any? #(= % *empty-value*) results))
       results)))
@@ -118,13 +118,12 @@
   "Builds the backward dependency graph from the cells map.  Each
    node of the graph is a cell."
   [cells]
-  (let [nodes (vals cells)
+  (let [nodes (apply union (vals cells))
         step (fn [n]
-               (for [dep-name (:dependents n)
-                     dep-cell (cells dep-name)]
-                 dep-cell))
+               (apply union (for [dep-name (:dependents n)]
+                              (cells dep-name))))
         neighbors (zipmap nodes (map step nodes))]
-    (struct-map dataflow
+    (struct-map directed-graph
         :nodes nodes
         :neighbors neighbors)))
 
@@ -170,8 +169,8 @@
 
 (defn build-source-cell
   "Builds a source cell"
-  [name]
-  (with-meta (struct source-cell name (ref *empty-value*) ::source-cell)
+  [name init]
+  (with-meta (struct source-cell name (ref init) ::source-cell)
              {:type ::dataflow-cell}))
 
 (defn- is-var?
@@ -238,9 +237,9 @@
 
    Of:
 
-    (cell :source fred)
+    (cell :source fred 0)
 
-   Which builds a source cell fred"
+   Which builds a source cell fred with initial value 0"
   [type & data]
   (cond
    (symbol? type) (let [name type ; No type for standard cell
@@ -248,8 +247,8 @@
                         deps (get-deps expr)
                         fun (build-fun expr)]
                     `(build-standard-cell '~name ~deps ~fun '~expr))
-   (= type :source) (let [[name] data]
-                      `(build-source-cell '~name))))
+   (= type :source) (let [[name init] data]
+                      `(build-source-cell '~name ~init))))
 
 
 ;;; Cell Display
@@ -258,7 +257,7 @@
 
 (defmethod display-cell ::source-cell
   [cell]
-  (list 'cell :source (:name cell)))
+  (list 'cell :source (:name cell) (-> cell :value deref)))
 
 (defmethod display-cell ::cell
   [cell]
@@ -274,38 +273,42 @@
 
 (defmulti eval-cell
   "Evaluate a dataflow cell.  Return true if the value changed."
-  :cell-type)
+  (fn [df data cell] (:cell-type cell)))
 
 (defmethod eval-cell ::source-cell
   [df data cell]
-  (let [name (:name cell)]
-    (if (contains? data name)
+  (let [name (:name cell)
+        val (:value cell)]
+    (when (contains? data name)
       (let [new-val (data name)]
-        (if (not= @(:val cell))
-          (do (ref-set (:val cell) new-val)
-              true)
-          false))
-      false)))
+        (when (not= @val new-val)
+          (ref-set val new-val)
+          true)))))
 
 (defmethod eval-cell ::cell
   [df data cell]
-  (let [new-val ((:fun cell) df)]
-    (if (not= @(:val cell) new-val)
-      (do (ref-set (:val cell) new-val)
-          true)
-      false)))
+  (let [val (:value cell)
+        new-val ((:fun cell) df)]
+    (when (not= @val new-val)
+      (ref-set val new-val)
+      true)))
 
 (defn- perform-flow
-  "Evaluate the needed cells (a set) from the given dataflow.  Data is
+  "Evaluate the needed cells (a sequence) from the given dataflow.  Data is
    a name-value mapping of new values for the source cells"
- [df data needed]
-  (let [this (first needed)
-        fore (:fore-graph df)
-        remaining (disj needed this)]
-    (do (if (eval-cell df data this)
-          (recur df data (union remaining
-                                (set (get-neighbors fore this))))
-          (recur df data remaining)))))
+ [df data needed done]
+ (when (seq needed)
+   (let [this (first needed)
+         remain (next needed)
+         new-done (conj done this)]
+     (if (and (-> this done not)
+              (eval-cell df data this))
+       (recur df
+              data
+              (concat remain
+                      (get-neighbors (:fore-graph df) this))
+              new-done)
+       (recur df data remain new-done)))))
 
 (defn- validate-update
   "Ensure that all the updated cells are source cells"
@@ -315,7 +318,6 @@
       (when (not (isa? (:cell-type cell) ::source-cell))
         (throwf Exception "Cell %n is not a source cell" name)))))
         
-
 (defn update-values
   "Given a dataflow, and a map of name-value pairs, update the
    dataflow by binding the new values.  Each name must be of a source
@@ -324,10 +326,9 @@
   (validate-update df (keys data))
   (let [needed (apply union (for [name (keys data)]
                               (set ((:cells df) name))))]
-    (dosync (perform-flow df data needed))))
+    (dosync (perform-flow df data needed #{}))))
   
 
-    
 
 (comment
   (build-fun '(apply + (apply - ?fred ?mary)))
@@ -336,18 +337,23 @@
   (display-cell (cell fred (+ ?mary (apply + ?*sue))))
   (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
 
-  (display-cell (cell :source fred))
-  (macroexpand '(cell :source fred))
+  (display-cell (cell :source fred 0))
+  (macroexpand '(cell :source fred 0))
 
-  (print-dataflow
+  (def df
    (build-dataflow
-    [(cell :source fred)
-     (cell :source mary)
+    [(cell :source fred 0)
+     (cell :source mary 0)
      (cell joan (+ ?fred ?mary))]))
+
+  (update-values df {'fred 1 'mary 1})
+
+  (deref (:value (get-cell df 'joan)))
 
   (use :reload 'jls.dataflow.dataflow)
   (use 'clojure.contrib.stacktrace) (e)
   (use 'clojure.contrib.trace)
 )
+    
 
 ;; End of file

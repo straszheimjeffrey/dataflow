@@ -75,7 +75,8 @@
 ; A collection of cells and dependency information
 
 (defstruct dataflow
-  :cells          ; A map of cell names (symbols) to collection of cells
+  :cells          ; A set of all cells
+  :cells-map      ; A map of cell names (symbols) to collection of cells
   :fore-graph     ; The inverse of back-graph, shows dataflow
   :topological)   ; A vector of sets of independent nodes -- orders the computation
 
@@ -85,7 +86,7 @@
 (defn get-cells
   "Get all the cells named by name"
   [df name]
-  ((:cells df) name))
+  ((:cells-map df) name))
 
 (defn get-cell
   "Get the single cell named by name"
@@ -99,8 +100,7 @@
 (defn get-source-cells
   "Returns a collection of source cells from the dataflow"
   [df]
-  (for [cells (-> df :cells vals)
-        cell cells
+  (for [cell (:cells df)
         :when (isa? (:cell-type cell) ::source-cell)]
     cell))
 
@@ -149,24 +149,25 @@
 (defn- build-back-graph
   "Builds the backward dependency graph from the cells map.  Each
    node of the graph is a cell."
-  [cells]
-  (let [nodes (apply union (vals cells))
-        step (fn [n]
+  [cells cells-map]
+  (let [step (fn [n]
                (apply union (for [dep-name (:dependents n)]
-                              (cells dep-name))))
-        neighbors (zipmap nodes (map step nodes))]
+                              (cells-map dep-name))))
+        neighbors (zipmap cells (map step cells))]
     (struct-map directed-graph
-        :nodes nodes
+        :nodes cells
         :neighbors neighbors)))
 
 (defn build-dataflow
   "Given a collection of cells, build a dataflow object"
   [cs]
-  (let [cells (build-cells-map cs)
-        back-graph (build-back-graph cells)
+  (let [cells (set cs)
+        cells-map (build-cells-map cs)
+        back-graph (build-back-graph cells cells-map)
         fore-graph (reverse-graph back-graph)]
     (struct-map dataflow
       :cells cells
+      :cells-map cells-map
       :fore-graph fore-graph
       :topological (dependency-list back-graph))))
 
@@ -175,8 +176,7 @@
 
 (defn print-dataflow
   [df]
-  (doseq [cells (-> df :cells vals)
-          cell cells]
+  (doseq [cell (:cells df)]
     (println cell)))
 
 
@@ -185,15 +185,13 @@
 (defn add-cells
   "Given a collection of cells, add them to the dataflow"
   [df cells]
-  (let [old-cells (-> df :cells vals)
-        new-cells (union (set cells) old-cells)]
+  (let [new-cells (union (set cells) (:cells df))]
     (build-dataflow new-cells)))
 
 (defn remove-cells
   "Given a collection of cells, remove them from the dataflow"
   [df cells]
-  (let [old-cells (-> df :cells vals)
-        new-cells (difference old-cells (set cells))]
+  (let [new-cells (difference (:cells df) (set cells))]
     (build-dataflow new-cells)))
 
 
@@ -402,14 +400,14 @@
   [df data]
   (validate-update df (keys data))
   (let [needed (apply union (for [name (keys data)]
-                              (set ((:cells df) name))))]
+                              (set ((:cells-map df) name))))]
     (dosync (perform-flow df data needed))))
 
 (defn full-update
   "Apply all the current source cell values.  Useful for a new
    dataflow, or one that has been updated with new cells"
   [df]
-  (let [needed (apply union (set (-> df :cells vals)))
+  (let [needed (:cells df)
         fg (:fore-graph df)]
     (dosync (perform-flow df {} needed))))
 

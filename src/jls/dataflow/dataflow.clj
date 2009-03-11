@@ -15,9 +15,10 @@
 
 
 (ns jls.dataflow.dataflow
-  (:use [clojure.set :only (union difference)])
+  (:use [clojure.set :only (union intersection difference)])
   (:use [clojure.contrib.graph :only (directed-graph
                                       reverse-graph
+                                      dependency-list
                                       get-neighbors)])
   (:use [clojure.contrib.walk :only (postwalk)])
   (:use [clojure.contrib.except :only (throwf)]))
@@ -62,7 +63,8 @@
 (defstruct dataflow
   :cells          ; A map of cell names (symbols) to collection of cells
   :back-graph     ; A graph of dependencies, the nodes are cells
-  :fore-graph)    ; The inverse of back-graph, shows dataflow
+  :fore-graph     ; The inverse of back-graph, shows dataflow
+  :topological)   ; A vector of sets of independent nodes -- orders the computation
 
 
 ;;; Environment Access
@@ -136,7 +138,8 @@
     (struct-map dataflow
       :cells cells
       :back-graph back-graph
-      :fore-graph fore-graph)))
+      :fore-graph fore-graph
+      :topological (dependency-list back-graph))))
 
 
 ;;; Displaying a dataflow
@@ -296,20 +299,20 @@
 (defn- perform-flow
   "Evaluate the needed cells (a sequence) from the given dataflow.  Data is
    a name-value mapping of new values for the source cells"
- [df data needed done]
- (when (seq needed)
-   (let [this (first needed)
-         remain (next needed)
-         new-done (conj done this)]
-     (if (and (-> this done not)
-              (eval-cell df data this))
-       (recur df
-              data
-              (concat remain
-                      (get-neighbors (:fore-graph df) this))
-              new-done)
-       (recur df data remain new-done)))))
-
+ [df data needed]
+ (loop [needed needed
+        tops (:topological df)]
+   (let [now (first tops) ; Now is a set of nodes
+         new-tops (next tops)]
+     (when (and (-> needed empty? not)
+                (-> now empty? not))
+       (let [step (fn [needed cell]
+                    (if (eval-cell df data cell)
+                      (union needed (get-neighbors (:fore-graph df) cell))
+                      needed))
+             new-needed (reduce step needed (intersection now needed))]
+         (recur new-needed new-tops))))))
+         
 (defn- validate-update
   "Ensure that all the updated cells are source cells"
   [df names]
@@ -326,8 +329,7 @@
   (validate-update df (keys data))
   (let [needed (apply union (for [name (keys data)]
                               (set ((:cells df) name))))]
-    (dosync (perform-flow df data needed #{}))))
-  
+    (dosync (perform-flow df data needed))))
 
 
 (comment
@@ -346,9 +348,10 @@
      (cell :source mary 0)
      (cell joan (+ ?fred ?mary))]))
 
-  (update-values df {'fred 1 'mary 1})
+  (update-values df {'fred 5 'mary 1})
 
-  (deref (:value (get-cell df 'joan)))
+  (get-value df 'fred)
+  (get-value df 'joan)
 
   (use :reload 'jls.dataflow.dataflow)
   (use 'clojure.contrib.stacktrace) (e)

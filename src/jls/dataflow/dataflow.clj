@@ -51,7 +51,20 @@
 
 (derive ::cell ::dependent-cell) ; A cell that has a dependents field
 
-;; An sentinal value
+;; Validator
+
+; A cell that has no value, but can throw an exception when run
+
+(defstruct validator-cell
+  :name            ; Always ::validator
+  :dependents      ; The names of cells on which this depends, a collection
+  :fun             ; A clojure that can throw an exception
+  :display         ; The original exprssion for display
+  :cell-type)      ; Should be ::validator-cell
+
+(derive ::validator-cell ::dependent-cell)
+
+;; A sentinal value
 
 (def *empty-value* (java.lang.Object.))
 
@@ -62,7 +75,6 @@
 
 (defstruct dataflow
   :cells          ; A map of cell names (symbols) to collection of cells
-  :back-graph     ; A graph of dependencies, the nodes are cells
   :fore-graph     ; The inverse of back-graph, shows dataflow
   :topological)   ; A vector of sets of independent nodes -- orders the computation
 
@@ -144,7 +156,6 @@
         fore-graph (reverse-graph back-graph)]
     (struct-map dataflow
       :cells cells
-      :back-graph back-graph
       :fore-graph fore-graph
       :topological (dependency-list back-graph))))
 
@@ -177,11 +188,13 @@
 
 ;;; Cell building
 
+(def *meta* {:type ::dataflow-cell})
+
 (defn build-source-cell
   "Builds a source cell"
   [name init]
   (with-meta (struct source-cell name (ref init) ::source-cell)
-             {:type ::dataflow-cell}))
+             *meta*))
 
 (defn- is-var?
   [symb]
@@ -228,7 +241,12 @@
   "Builds a standard cell"
   [name deps fun expr]
   (with-meta (struct standard-cell name (ref *empty-value*) deps fun expr ::cell)
-             {:type ::dataflow-cell}))
+             *meta*))
+
+(defn build-validator-cell
+  [deps fun expr]
+  (with-meta (struct validator-cell ::validator deps fun expr ::validator-cell)
+             *meta*))
 
 (defmacro cell
   "Build a standard cell, like this:
@@ -245,11 +263,18 @@
 
    Which creates a cell that applies * to the collection of all cells named sally
 
-   Of:
+   Or:
 
     (cell :source fred 0)
 
-   Which builds a source cell fred with initial value 0"
+   Which builds a source cell fred with initial value 0
+
+   Or:
+
+     (cell :validator (when (< ?fred ?sally)
+                          (throwf \"%s must be greater than %s\" ?fred ?sally))
+
+   Which will perform the validation"
   [type & data]
   (cond
    (symbol? type) (let [name type ; No type for standard cell
@@ -258,9 +283,13 @@
                         fun (build-fun expr)]
                     `(build-standard-cell '~name ~deps ~fun '~expr))
    (= type :source) (let [[name init] data]
-                      `(build-source-cell '~name ~init))))
+                      `(build-source-cell '~name ~init))
+   (= type :validator) (let [[expr] data
+                             deps (get-deps expr)
+                             fun (build-fun expr)]
+                         `(build-validator-cell ~deps ~fun '~expr))))
 
-
+                         
 ;;; Cell Display
 
 (defmulti display-cell :cell-type)
@@ -272,6 +301,10 @@
 (defmethod display-cell ::cell
   [cell]
   (list 'cell (:name cell) (:display cell)))
+
+(defmethod display-cell ::validator-cell
+  [cell]
+  (list 'cell :validator (:display cell)))
 
 (defmethod print-method ::dataflow-cell
   [f #^Writer w]
@@ -302,6 +335,10 @@
     (when (not= @val new-val)
       (ref-set val new-val)
       true)))
+
+(defmethod eval-cell ::validator-cell
+  [df data cell]
+  ((:fun cell) df))
 
 (defn- perform-flow
   "Evaluate the needed cells (a sequence) from the given dataflow.  Data is
@@ -349,28 +386,28 @@
 
 
 (comment
-  (build-fun '(apply + (apply - ?fred ?mary)))
-  (get-deps '(apply + (apply - ?fred ?mary)))
 
-  (display-cell (cell fred (+ ?mary (apply + ?*sue))))
-  (macroexpand '(cell fred (+ ?mary (apply + ?*sue))))
-
-  (display-cell (cell :source fred 0))
-  (macroexpand '(cell :source fred 0))
+  (macroexpand '(cell :validator (when ?fred (throwf "fred!"))))
+  (cell :validator (when ?fred (throwf "fred!")))
 
   (def df
    (build-dataflow
     [(cell :source fred 0)
      (cell :source mary 1)
-     (cell joan (+ ?fred ?mary))]))
+     (cell joan (+ ?fred ?mary))
+     (cell joan (* ?fred ?mary))
+     (cell sally (apply + ?*joan))
+     (cell :validator (when (= ?sally 0) (throwf Exception "Sally is 0")))]))
 
   (get-source-cells df)
 
   (full-update df)
   (update-values df {'fred 5 'mary 1})
+  (update-values df {'fred 0 'mary 0})
 
   (get-value df 'fred)
-  (get-value df 'joan)
+  (get-values df 'joan)
+  (get-value df 'sally)
 
   (use :reload 'jls.dataflow.dataflow)
   (use 'clojure.contrib.stacktrace) (e)

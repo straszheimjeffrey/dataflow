@@ -76,8 +76,8 @@
 
 (defstruct dataflow
   :cells          ; A set of all cells
-  :cells-map      ; A map of cell names (symbols) to collection of cells
-  :fore-graph     ; The inverse of back-graph, shows dataflow
+  :cells-map      ; A map of cell names (symbols) to collections of cells
+  :fore-graph     ; The inverse of the dependency graph, nodes are cells
   :topological)   ; A vector of sets of independent nodes -- orders the computation
 
 
@@ -175,12 +175,17 @@
 ;;; Displaying a dataflow
 
 (defn print-dataflow
+  "Prints a dataflow, one cell per line"
   [df]
   (doseq [cell (:cells df)]
     (println cell)))
 
 
 ;;; Modifying a Dataflow
+
+; Warning, these methods return a new dataflow, the old dataflow
+; aliases the existing cells, and if used could cause inconsitant
+; data.  This will be fixed later.
 
 (defn add-cells
   "Given a collection of cells, add them to the dataflow"
@@ -231,6 +236,7 @@
                      (is-old-var? symb)) (-> symb name (.substring 2) symbol))))
 
 (defn- replace-symbol
+  "Walk the from replacing the ?X forms with the needed calls"
   [df ov form]
   (cond
    (-> form symbol? not) form
@@ -240,12 +246,14 @@
    :otherwise form))
 
 (defn- build-fun
+  "Build the closure needed to compute a cell"
   [form]
   (let [df (gensym)
         ov (gensym)]
     `(fn [~df ~ov] ~(postwalk (partial replace-symbol df ov) form))))
 
 (defn- get-deps
+  "Get the names of the dependent cells"
   [form]
   (let [step (fn [f]
                (cond
@@ -264,6 +272,7 @@
              *meta*))
 
 (defn build-validator-cell
+  "Builds a validator cell"
   [deps fun expr]
   (with-meta (struct validator-cell ::validator deps fun expr ::validator-cell)
              *meta*))
@@ -312,7 +321,9 @@
                          
 ;;; Cell Display
 
-(defmulti display-cell :cell-type)
+(defmulti display-cell
+  "A 'readable' form of the cell"
+  :cell-type)
 
 (defmethod display-cell ::source-cell
   [cell]
@@ -367,9 +378,9 @@
       [false nil]))
 
 (defn- perform-flow
-  "Evaluate the needed cells (a sequence) from the given dataflow.  Data is
+  "Evaluate the needed cells (a set) from the given dataflow.  Data is
    a name-value mapping of new values for the source cells"
- [df data needed]
+  [df data needed]
  (loop [needed needed
         tops (:topological df)
         old {}]

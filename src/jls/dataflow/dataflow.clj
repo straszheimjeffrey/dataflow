@@ -310,7 +310,7 @@
   [type & data]
   (cond
    (symbol? type) (let [name type ; No type for standard cell
-                        [expr] data
+                        expr (first data) ; we ignore extra data!
                         deps (get-deps expr)
                         fun (build-fun expr)]
                     `(build-standard-cell '~name ~deps ~fun '~expr))
@@ -334,7 +334,7 @@
 
 (defmethod display-cell ::cell
   [cell]
-  (list 'cell (:name cell) (:display cell)))
+  (list 'cell (:name cell) (:display cell) (-> cell :value deref)))
 
 (defmethod display-cell ::validator-cell
   [cell]
@@ -458,7 +458,8 @@
                         (when (<= ?greg ?-greg)
                           (throwf Exception "Non monotonic"))))]))
 
-  (print-dataflow df)
+  (do (println)
+      (print-dataflow df))
 
   (add-cell-watcher (get-cell df 'sally)
                     nil

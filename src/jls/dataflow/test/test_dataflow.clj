@@ -71,10 +71,14 @@
   (is (do (update-values df-2 {'magic 12})
           (and (= (gv 'total-cost) 2)
                (= (gv 'casting) 22))))
-  (is (do (let [df-3 (add-cells df-2 magic-skill)]
-            (full-update df-3)
-            (and (= (gv 'total-cost) 7)
-                 (= (gv 'casting) 24))))))
+  (is (dosync (add-cells df-2 magic-skill)
+              (full-update df-2)
+              (and (= (gv 'total-cost) 7)
+                   (= (gv 'casting) 24))))
+  (is (dosync (remove-cells df-2 magic-skill)
+              (full-update df-2)
+              (and (= (gv 'total-cost) 2)
+                   (= (gv 'casting) 22)))))
                
 
 (comment

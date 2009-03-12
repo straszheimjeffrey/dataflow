@@ -86,7 +86,7 @@
 (defn get-cells
   "Get all the cells named by name"
   [df name]
-  ((:cells-map df) name))
+  ((:cells-map @df) name))
 
 (defn get-cell
   "Get the single cell named by name"
@@ -100,7 +100,7 @@
 (defn get-source-cells
   "Returns a collection of source cells from the dataflow"
   [df]
-  (for [cell (:cells df)
+  (for [cell (:cells @df)
         :when (isa? (:cell-type cell) ::source-cell)]
     cell))
 
@@ -158,8 +158,8 @@
         :nodes cells
         :neighbors neighbors)))
 
-(defn build-dataflow
-  "Given a collection of cells, build a dataflow object"
+(defn- build-dataflow*
+  "Builds the dataflow structure"
   [cs]
   (let [cells (set cs)
         cells-map (build-cells-map cs)
@@ -171,33 +171,36 @@
       :fore-graph fore-graph
       :topological (dependency-list back-graph))))
 
+(defn build-dataflow
+  "Given a collection of cells, build a dataflow object"
+  [cs]
+  (ref (build-dataflow* cs)))
+
 
 ;;; Displaying a dataflow
 
 (defn print-dataflow
   "Prints a dataflow, one cell per line"
   [df]
-  (doseq [cell (:cells df)]
+  (doseq [cell (:cells @df)]
     (println cell)))
 
 
 ;;; Modifying a Dataflow
 
-; Warning, these methods return a new dataflow, the old dataflow
-; aliases the existing cells, and if used could cause inconsitant
-; data.  This will be fixed later.
-
 (defn add-cells
-  "Given a collection of cells, add them to the dataflow"
+  "Given a collection of cells, add them to the dataflow.  Must be run
+  in transaction."
   [df cells]
-  (let [new-cells (union (set cells) (:cells df))]
-    (build-dataflow new-cells)))
+  (let [new-cells (union (set cells) (:cells @df))]
+    (ref-set df (build-dataflow* new-cells))))
 
 (defn remove-cells
-  "Given a collection of cells, remove them from the dataflow"
+  "Given a collection of cells, remove them from the dataflow.  Must
+   be run in transaction."
   [df cells]
-  (let [new-cells (difference (:cells df) (set cells))]
-    (build-dataflow new-cells)))
+  (let [new-cells (difference (:cells @df) (set cells))]
+    (ref-set df (build-dataflow* new-cells))))
 
 
 ;;; Cell building
@@ -237,20 +240,20 @@
 
 (defn- replace-symbol
   "Walk the from replacing the ?X forms with the needed calls"
-  [df ov form]
+  [dfs ov form]
   (cond
    (-> form symbol? not) form
-   (is-var? form) `(get-value ~df ~(cell-name form))
-   (is-col-var? form) `(get-values ~df ~(cell-name form))
-   (is-old-var? form) `(get-old-value ~df ~ov ~(cell-name form))
+   (is-var? form) `(get-value ~dfs ~(cell-name form))
+   (is-col-var? form) `(get-values ~dfs ~(cell-name form))
+   (is-old-var? form) `(get-old-value ~dfs ~ov ~(cell-name form))
    :otherwise form))
 
 (defn- build-fun
   "Build the closure needed to compute a cell"
   [form]
-  (let [df (gensym)
+  (let [dfs (gensym)
         ov (gensym)]
-    `(fn [~df ~ov] ~(postwalk (partial replace-symbol df ov) form))))
+    `(fn [~dfs ~ov] ~(postwalk (partial replace-symbol dfs ov) form))))
 
 (defn- get-deps
   "Get the names of the dependent cells"
@@ -381,21 +384,21 @@
   "Evaluate the needed cells (a set) from the given dataflow.  Data is
    a name-value mapping of new values for the source cells"
   [df data needed]
- (loop [needed needed
-        tops (:topological df)
-        old {}]
-   (let [now (first tops) ; Now is a set of nodes
-         new-tops (next tops)]
-     (when (and (-> needed empty? not)
-                (-> now empty? not))
-       (let [step (fn [[needed old] cell]
-                    (let [[changed ov] (eval-cell df data old cell)
-                          new-old (assoc old (:name cell) ov)]
-                      (if changed
-                        [(union needed (get-neighbors (:fore-graph df) cell)) new-old]
-                        [needed new-old])))
-             [new-needed new-old] (reduce step [needed old] (intersection now needed))]
-         (recur new-needed new-tops new-old))))))
+  (loop [needed needed
+         tops (:topological @df)
+         old {}]
+    (let [now (first tops) ; Now is a set of nodes
+          new-tops (next tops)]
+      (when (and (-> needed empty? not)
+                 (-> now empty? not))
+        (let [step (fn [[needed old] cell]
+                     (let [[changed ov] (eval-cell df data old cell)
+                           new-old (assoc old (:name cell) ov)]
+                       (if changed
+                         [(union needed (get-neighbors (:fore-graph @df) cell)) new-old]
+                         [needed new-old])))
+              [new-needed new-old] (reduce step [needed old] (intersection now needed))]
+          (recur new-needed new-tops new-old))))))
          
 (defn- validate-update
   "Ensure that all the updated cells are source cells"
@@ -410,18 +413,20 @@
    dataflow by binding the new values.  Each name must be of a source
    cell"
   [df data]
-  (validate-update df (keys data))
-  (let [needed (apply union (for [name (keys data)]
-                              (set ((:cells-map df) name))))]
-    (dosync (perform-flow df data needed))))
+  (dosync
+   (validate-update df (keys data))
+   (let [needed (apply union (for [name (keys data)]
+                               (set ((:cells-map @df) name))))]
+     (perform-flow df data needed))))
 
 (defn full-update
   "Apply all the current source cell values.  Useful for a new
    dataflow, or one that has been updated with new cells"
   [df]
-  (let [needed (:cells df)
-        fg (:fore-graph df)]
-    (dosync (perform-flow df {} needed))))
+  (dosync
+   (let [needed (:cells @df)
+         fg (:fore-graph @df)]
+     (perform-flow df {} needed))))
 
 
 ;;; Watchers
@@ -439,6 +444,8 @@
 
 (comment
 
+  (macroexpand '(cell greg (+ ?fred ?mary)))
+
   (def df
    (build-dataflow
     [(cell :source fred 1)
@@ -450,6 +457,8 @@
      (cell :validator (when (number? ?-greg)
                         (when (<= ?greg ?-greg)
                           (throwf Exception "Non monotonic"))))]))
+
+  (print-dataflow df)
 
   (add-cell-watcher (get-cell df 'sally)
                     nil

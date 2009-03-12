@@ -27,8 +27,7 @@
                           (assert (>= ?product ?-product))))]))
 
 (deftest test-df-1
-  (is (do (full-update df-1)
-          (= (get-value df-1 'product) 0)))
+  (is (= (get-value df-1 'product) 0))
   (is (do (update-values df-1 {'items [4 5]})
           (= (get-value df-1 'product) 0)))
   (is (do (update-values df-1 {'base 2})
@@ -64,19 +63,16 @@
 (defn gv [n] (get-value df-2 n))
 
 (deftest test-df-2
-  (is (do (full-update df-2)
-          (and (= (gv 'total-cost) 0)
-               (= (gv 'strength) 10)
-               (= (gv 'casting) 20))))
+  (is (and (= (gv 'total-cost) 0)
+           (= (gv 'strength) 10)
+           (= (gv 'casting) 20)))
   (is (do (update-values df-2 {'magic 12})
           (and (= (gv 'total-cost) 2)
                (= (gv 'casting) 22))))
   (is (dosync (add-cells df-2 magic-skill)
-              (full-update df-2)
               (and (= (gv 'total-cost) 7)
                    (= (gv 'casting) 24))))
   (is (dosync (remove-cells df-2 magic-skill)
-              (full-update df-2)
               (and (= (gv 'total-cost) 2)
                    (= (gv 'casting) 22)))))
                

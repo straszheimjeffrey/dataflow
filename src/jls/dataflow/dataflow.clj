@@ -171,10 +171,14 @@
       :fore-graph fore-graph
       :topological (dependency-list back-graph))))
 
+(def initialize)
+
 (defn build-dataflow
-  "Given a collection of cells, build a dataflow object"
+  "Given a collection of cells, build and return a dataflow object"
   [cs]
-  (ref (build-dataflow* cs)))
+  (let [df (ref (build-dataflow* cs))]
+    (initialize df)
+    df))
 
 
 ;;; Displaying a dataflow
@@ -193,14 +197,18 @@
   in transaction."
   [df cells]
   (let [new-cells (union (set cells) (:cells @df))]
-    (ref-set df (build-dataflow* new-cells))))
+    (do
+      (ref-set df (build-dataflow* new-cells))
+      (initialize df))))
 
 (defn remove-cells
   "Given a collection of cells, remove them from the dataflow.  Must
    be run in transaction."
   [df cells]
   (let [new-cells (difference (:cells @df) (set cells))]
-    (ref-set df (build-dataflow* new-cells))))
+    (do
+      (ref-set df (build-dataflow* new-cells))
+      (initialize df))))
 
 
 ;;; Cell building
@@ -419,7 +427,7 @@
                                (set ((:cells-map @df) name))))]
      (perform-flow df data needed))))
 
-(defn full-update
+(defn- initialize
   "Apply all the current source cell values.  Useful for a new
    dataflow, or one that has been updated with new cells"
   [df]
@@ -444,8 +452,6 @@
 
 (comment
 
-  (macroexpand '(cell greg (+ ?fred ?mary)))
-
   (def df
    (build-dataflow
     [(cell :source fred 1)
@@ -466,7 +472,6 @@
                     (fn [key cell o n]
                       (printf "sally changed from %s to %s\n" o n)))
 
-  (full-update df)
   (update-values df {'fred 1 'mary 1})
   (update-values df {'fred 5 'mary 1})
   (update-values df {'fred 0 'mary 0})

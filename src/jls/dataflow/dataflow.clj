@@ -251,8 +251,8 @@
 (defn- build-fun
   "Build the closure needed to compute a cell"
   [form]
-  (let [dfs (gensym)
-        ov (gensym)]
+  (let [dfs (gensym "df_")
+        ov (gensym "old_")]
     `(fn [~dfs ~ov] ~(postwalk (partial replace-symbol dfs ov) form))))
 
 (defn- get-deps

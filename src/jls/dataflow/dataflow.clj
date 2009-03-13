@@ -399,11 +399,11 @@
       (when (and (-> needed empty? not)
                  (-> now empty? not))
         (let [step (fn [[needed old] cell]
-                     (let [[changed ov] (eval-cell df data old cell)
-                           new-old (assoc old (:name cell) ov)]
+                     (let [[changed ov] (eval-cell df data old cell)]
                        (if changed
-                         [(union needed (get-neighbors (:fore-graph @df) cell)) new-old]
-                         [needed new-old])))
+                         [(union needed (get-neighbors (:fore-graph @df) cell))
+                          (assoc old (:name cell) ov)]
+                         [needed old])))
               [new-needed new-old] (reduce step [needed old] (intersection now needed))]
           (recur new-needed new-tops new-old))))))
          

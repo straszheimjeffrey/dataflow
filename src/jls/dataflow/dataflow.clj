@@ -176,9 +176,10 @@
 (defn build-dataflow
   "Given a collection of cells, build and return a dataflow object"
   [cs]
-  (let [df (ref (build-dataflow* cs))]
-    (initialize df)
-    df))
+  (dosync
+   (let [df (ref (build-dataflow* cs))]
+     (initialize df)
+     df)))
 
 
 ;;; Displaying a dataflow
@@ -193,22 +194,20 @@
 ;;; Modifying a Dataflow
 
 (defn add-cells
-  "Given a collection of cells, add them to the dataflow.  Must be run
-  in transaction."
+  "Given a collection of cells, add them to the dataflow."
   [df cells]
-  (let [new-cells (union (set cells) (:cells @df))]
-    (do
-      (ref-set df (build-dataflow* new-cells))
-      (initialize df))))
+  (dosync
+   (let [new-cells (union (set cells) (:cells @df))]
+     (ref-set df (build-dataflow* new-cells))
+     (initialize df))))
 
 (defn remove-cells
-  "Given a collection of cells, remove them from the dataflow.  Must
-   be run in transaction."
+  "Given a collection of cells, remove them from the dataflow."
   [df cells]
-  (let [new-cells (difference (:cells @df) (set cells))]
-    (do
-      (ref-set df (build-dataflow* new-cells))
-      (initialize df))))
+  (dosync
+   (let [new-cells (difference (:cells @df) (set cells))]
+     (ref-set df (build-dataflow* new-cells))
+     (initialize df))))
 
 
 ;;; Cell building
@@ -431,10 +430,9 @@
   "Apply all the current source cell values.  Useful for a new
    dataflow, or one that has been updated with new cells"
   [df]
-  (dosync
-   (let [needed (:cells @df)
-         fg (:fore-graph @df)]
-     (perform-flow df {} needed))))
+  (let [needed (:cells @df)
+        fg (:fore-graph @df)]
+    (perform-flow df {} needed)))
 
 
 ;;; Watchers

@@ -69,12 +69,12 @@
   (is (do (update-values df-2 {'magic 12})
           (and (= (gv 'total-cost) 2)
                (= (gv 'casting) 22))))
-  (is (dosync (add-cells df-2 magic-skill)
-              (and (= (gv 'total-cost) 7)
-                   (= (gv 'casting) 24))))
-  (is (dosync (remove-cells df-2 magic-skill)
-              (and (= (gv 'total-cost) 2)
-                   (= (gv 'casting) 22)))))
+  (is (do (add-cells df-2 magic-skill)
+          (and (= (gv 'total-cost) 7)
+               (= (gv 'casting) 24))))
+  (is (do (remove-cells df-2 magic-skill)
+          (and (= (gv 'total-cost) 2)
+               (= (gv 'casting) 22)))))
                
 
 (comment

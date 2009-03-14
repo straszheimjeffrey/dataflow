@@ -188,7 +188,7 @@
   "Prints a dataflow, one cell per line"
   [df]
   (println)
-  (doseq [cell (:cells @df)]
+  (doseq [cell (sort-by :name (:cells @df))]
     (println cell)))
 
 

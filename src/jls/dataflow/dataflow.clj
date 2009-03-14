@@ -190,7 +190,7 @@
   (println)
   (let [f (fn [cell] (-> cell :name str))]
     (doseq [cell (sort-by f (:cells @df))]
-      (println cell))))
+      (prn cell))))
 
 
 ;;; Modifying a Dataflow

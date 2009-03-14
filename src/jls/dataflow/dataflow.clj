@@ -187,6 +187,7 @@
 (defn print-dataflow
   "Prints a dataflow, one cell per line"
   [df]
+  (println)
   (doseq [cell (:cells @df)]
     (println cell)))
 

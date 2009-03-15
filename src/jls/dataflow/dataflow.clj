@@ -406,7 +406,9 @@
                          [(union needed (get-neighbors (:fore-graph @df) cell))
                           (assoc old (:name cell) ov)]
                          [needed old])))
-              [new-needed new-old] (reduce step [needed old] (intersection now needed))]
+              [new-needed new-old] (reduce step
+                                           [needed old]
+                                           (intersection now needed))]
           (recur new-needed new-tops new-old))))))
          
 (defn- validate-update

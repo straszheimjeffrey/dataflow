@@ -405,7 +405,10 @@
       (when (and (-> needed empty? not)
                  (-> now empty? not))
         (let [step (fn [[needed old] cell]
-                     (let [[changed ov] (eval-cell df data old cell)]
+                     (let [[changed ov] (try
+                                         (eval-cell df data old cell)
+                                         (catch Exception e
+                                           (throw (Exception. (str cell) e))))]
                        (if changed
                          [(union needed (get-neighbors (:fore-graph @df) cell))
                           (assoc old (:name cell) ov)]

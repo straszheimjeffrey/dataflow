@@ -132,6 +132,10 @@
     (env name)
     (get-value df name)))
 
+(defn get-value-from-cell
+  "Given a cell, get its value"
+  [cell]
+  (-> cell :value deref))
 
 ;;; Build Dataflow Structure
 
